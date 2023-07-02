@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::core::utils::*;
+use crate::core::PieceType;
 
 pub struct Board {
     black_pawn: u64,
@@ -17,6 +18,11 @@ pub struct Board {
     white_queen: u64,
     white_king: u64,
     en_passant: u64,
+    /// 0b0001 = white can castle kingsid
+    /// 0b0010 = white can castle queenside
+    /// 0b0100 = black can castle kingside
+    /// 0b1000 = black can castle queenside
+    castling_rights: u8,
 }
 
 impl Default for Board {
@@ -35,6 +41,7 @@ impl Default for Board {
             white_queen: 0x0800000000000000,
             white_king: 0x1000000000000000,
             en_passant: 0x0000000000000000,
+            castling_rights: 0b1111,
         }
     }
 }
@@ -47,12 +54,12 @@ impl Board {
         board.clear();
         board.en_passant = en_passant;
         let mut column = 0;
-        let mut row = 7;
+        let mut row = 0;
         for c in FEN.chars() {
             if c == '/' {
-                row -= 1;
+                row += 1;
                 column = 0;
-            } else if c.is_digit(10) {
+            } else if c.is_ascii_digit() {
                 column += c.to_digit(10).unwrap();
             } else if c.is_alphabetic() {
                 let piece = match c {
@@ -266,12 +273,12 @@ impl Board {
     }
 
     /// Moves a piece from one position to another.
-    /// Returns the piece that was captured, if any.
+    /// Returns the piece that has moved and the piece that was captured, if any.
     #[rustfmt::skip]
     pub fn move_piece(
         &mut self,
         r#move: &Move,
-    ) -> Option<PieceType> {
+    ) -> (PieceType, Option<PieceType>) {
         self.en_passant = 0;
         let from = 1 << (r#move.column_from + r#move.row_from * 8);
         let piece_orgin = self.get_piece(from).unwrap();
@@ -292,6 +299,7 @@ impl Board {
             PieceType::WhiteQueen  => self.white_queen  |= to,
             PieceType::WhiteKing   => self.white_king   |= to,
         }
+
         if piece_orgin == PieceType::BlackPawn || piece_orgin == PieceType::WhitePawn {
             if (from << 16) & to != 0 {
                 self.en_passant = from << 8;
@@ -299,16 +307,48 @@ impl Board {
                 self.en_passant = from >> 8;
             }
         }
+
         if piece_dest.is_none() {
             if piece_orgin == PieceType::BlackPawn {
                 self.white_pawn &= !to >> 8;
-                return self.get_piece(to - 8);
+                return (piece_orgin, self.get_piece(to - 8));
             } else if piece_orgin == PieceType::WhitePawn {
                 self.black_pawn &= !to << 8;
-                return self.get_piece(to + 8);
+                return (piece_orgin, self.get_piece(to + 8));
             }
         }
-        piece_dest
+
+        // promotion
+        if piece_orgin == PieceType::BlackPawn && r#move.row_to == 7 {
+            self.black_pawn &= !to;
+            self.black_queen |= to;
+        }
+        if piece_orgin == PieceType::WhitePawn && r#move.row_to == 0 {
+            self.white_pawn &= !to;
+            self.white_queen |= to;
+        }
+
+        // castling
+        if piece_orgin == PieceType::BlackKing {
+            if r#move.column_from == 4 && r#move.column_to == 6 {
+                self.black_rook &= !(1 << 7);
+                self.black_rook |= 1 << 5;
+            } else if r#move.column_from == 4 && r#move.column_to == 2 {
+                self.black_rook &= !(1 << 0);
+                self.black_rook |= 1 << 3;
+            }
+        }
+        if piece_orgin == PieceType::WhiteKing {
+            if r#move.column_from == 4 && r#move.column_to == 6 {
+                self.white_rook &= !(1 << 63);
+                self.white_rook |= 1 << 61;
+            } else if r#move.column_from == 4 && r#move.column_to == 2 {
+                self.white_rook &= !(1 << 56);
+                self.white_rook |= 1 << 59;
+            }
+        }
+
+        (piece_orgin, piece_dest)
     }
 
     pub fn get_black_pieces(&self) -> u64 {
@@ -333,19 +373,14 @@ impl Board {
         self.get_black_pieces() | self.get_white_pieces()
     }
 
-    /// filps the board vertically
-    pub fn flip_board(&self, board: u64) -> u64 {
-        let mut flipped_board = 0;
-        for i in 0..8 {
-            flipped_board |= (board >> (i * 8)) & 0xFF;
-            flipped_board <<= 8;
-        }
-        flipped_board
-    }
+
 
     #[rustfmt::skip]
-    pub fn get_allowed_moves(&self, column: u32, row: u32) -> u64 {
-        match self.get_piece_pos(column, row) {
+    pub fn get_allowed_moves(&self, column: u32, row: u32, color: bool) -> u64 {
+        let piece = self.get_piece_pos(column, row);
+        assert!(piece.is_some());
+        assert!(piece.unwrap().color() == color);
+        let moves = match piece {
             Some(PieceType::WhitePawn)   => self.get_allowed_white_pawn_moves(column, row),
             Some(PieceType::WhiteRook)   => self.get_allowed_white_rook_moves(column, row),
             Some(PieceType::WhiteKnight) => self.get_allowed_white_knight_moves(column, row),
@@ -359,13 +394,22 @@ impl Board {
             Some(PieceType::BlackQueen)  => self.get_allowed_black_queen_moves(column, row),
             Some(PieceType::BlackKing)   => self.get_allowed_black_king_moves(column, row),
             None => 0,
+        };
+        if let Some(piecetype) = piece {
+            if color != piece.unwrap().color() {
+                return 0;
+            }
         }
+        moves
     }
 
     #[rustfmt::skip]
-    pub fn is_legal_move(&self, from: u64, to: u64) -> bool {
+    pub fn is_legal_move(&self, from: u64, to: u64, color: bool) -> bool {
         let (from_column, from_row) = self.get_column_row(from);
         let piece = self.get_piece(from).unwrap();
+        if (!piece.color() && color) || (piece.color() && !color) {
+            return false;
+        }
         match piece {
             PieceType::BlackPawn   => self.get_allowed_black_pawn_moves(from_column, from_row)   & to != 0,
             PieceType::BlackRook   => self.get_allowed_black_rook_moves(from_column, from_row)   & to != 0,
@@ -617,7 +661,7 @@ impl Board {
                 moves |= pos >> 6;
             }
         }
-        moves
+        moves & !self.get_black_pieces()
     }
 
     pub fn get_allowed_white_knight_moves(&self, column: u32, row: u32) -> u64 {
@@ -659,7 +703,7 @@ impl Board {
                 moves |= pos >> 6;
             }
         }
-        moves
+        moves & !self.get_white_pieces()
     }
 
     pub fn get_allowed_black_bishop_moves(&self, column: u32, row: u32) -> u64 {
@@ -841,7 +885,22 @@ impl Board {
         if row > 0 && column < 7 {
             moves |= pos >> 7;
         }
-        moves & !self.get_black_pieces()
+        // castling right
+        if self.castling_rights & 0b0001 != 0
+            && self.get_all_pieces() & pos << 1 == 0
+            && self.get_all_pieces() & pos << 2 == 0
+        {
+            moves |= pos << 2;
+        }
+        // castling left
+        if self.castling_rights & 0b0010 != 0
+            && self.get_all_pieces() & pos >> 1 == 0
+            && self.get_all_pieces() & pos >> 2 == 0
+            && self.get_all_pieces() & pos >> 3 == 0
+        {
+            moves |= pos >> 2;
+        }
+        moves & !self.get_black_pieces() & !self.get_all_moves(true)
     }
 
     pub fn get_allowed_white_king_moves(&self, column: u32, row: u32) -> u64 {
@@ -879,6 +938,46 @@ impl Board {
         if row > 0 && column < 7 {
             moves |= pos >> 7;
         }
-        moves & !self.get_white_pieces()
+        // castling right
+        if self.castling_rights & 0b0100 != 0
+            && self.get_all_pieces() & pos << 1 == 0
+            && self.get_all_pieces() & pos << 2 == 0
+        {
+            moves |= pos << 2;
+        }
+        // castling left
+        if self.castling_rights & 0b1000 != 0
+            && self.get_all_pieces() & pos >> 1 == 0
+            && self.get_all_pieces() & pos >> 2 == 0
+            && self.get_all_pieces() & pos >> 3 == 0
+        {
+            moves |= pos >> 2;
+        }
+        moves & !self.get_white_pieces() & !self.get_all_moves(false)
+    }
+
+    /// returns the points that white is ahead by
+    pub fn points(&self) -> i32 {
+        let mut points = 0;
+        for i in 0..64 {
+            let pos = 1 << i;
+            if let Some(piece) = self.get_piece(pos) {
+                points += piece.points() as i32 * (piece.color() as i32 * 2 - 1);
+            }
+        }
+        points
+    }
+
+    pub fn get_all_moves(&self, color: bool) -> u64 {
+        let mut moves = 0;
+        for i in 0..64 {
+            let pos = 1 << i;
+            if let Some(piece) = self.get_piece(pos) {
+                if piece.color() == color {
+                    moves |= self.get_allowed_moves(i % 8, i / 8, color);
+                }
+            }
+        }
+        moves
     }
 }

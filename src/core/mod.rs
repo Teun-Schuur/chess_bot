@@ -17,7 +17,64 @@ pub enum PieceType {
     WhiteQueen,
     WhiteRook,
 }
+impl PieceType {
+    pub fn from_char(c: char) -> Option<PieceType> {
+        match c {
+            'p' => Some(PieceType::BlackPawn),
+            'r' => Some(PieceType::BlackRook),
+            'n' => Some(PieceType::BlackKnight),
+            'b' => Some(PieceType::BlackBishop),
+            'q' => Some(PieceType::BlackQueen),
+            'k' => Some(PieceType::BlackKing),
+            'P' => Some(PieceType::WhitePawn),
+            'R' => Some(PieceType::WhiteRook),
+            'N' => Some(PieceType::WhiteKnight),
+            'B' => Some(PieceType::WhiteBishop),
+            'Q' => Some(PieceType::WhiteQueen),
+            'K' => Some(PieceType::WhiteKing),
+            _ => None,
+        }
+    }
+    pub fn to_char(&self) -> char {
+        match self {
+            PieceType::BlackPawn => 'p',
+            PieceType::BlackRook => 'r',
+            PieceType::BlackKnight => 'n',
+            PieceType::BlackBishop => 'b',
+            PieceType::BlackQueen => 'q',
+            PieceType::BlackKing => 'k',
+            PieceType::WhitePawn => 'P',
+            PieceType::WhiteRook => 'R',
+            PieceType::WhiteKnight => 'N',
+            PieceType::WhiteBishop => 'B',
+            PieceType::WhiteQueen => 'Q',
+            PieceType::WhiteKing => 'K',
+        }
+    }
+    pub fn color(&self) -> bool {
+        matches!(
+            self,
+            PieceType::WhitePawn
+                | PieceType::WhiteRook
+                | PieceType::WhiteKnight
+                | PieceType::WhiteBishop
+                | PieceType::WhiteQueen
+                | PieceType::WhiteKing
+        )
+    }
+    pub fn points(&self) -> u32 {
+        match self {
+            PieceType::BlackPawn | PieceType::WhitePawn => 100,
+            PieceType::BlackKnight | PieceType::WhiteKnight => 300,
+            PieceType::BlackBishop | PieceType::WhiteBishop => 300,
+            PieceType::BlackRook | PieceType::WhiteRook => 500,
+            PieceType::BlackQueen | PieceType::WhiteQueen => 900,
+            PieceType::BlackKing | PieceType::WhiteKing => 0,
+        }
+    }
+}
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Move {
     pub column_from: u32,
     pub row_from: u32,

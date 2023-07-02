@@ -1,15 +1,28 @@
-use super::{board::Board, utils::*, PieceType};
+use std::fmt::Debug;
+
+use super::{board::Board, utils::*, Move, PieceType};
 
 pub struct Game {
     pub board: Board,
     /// if white's turn, true, else false
     pub turn: bool,
     /// the amount of points white has
-    pub points: u32,
+    pub points: i32,
     /// Fullmove number: The number of the full moves. It starts at 1 and is incremented after Black's move.
     pub fullmove: u32,
     /// Halfmove clock, the amount of moves since the last capture or pawn move used for the 50 move rule
     pub halfmove_clock: u32,
+}
+
+impl Debug for Game {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Game")
+            .field("turn", &self.turn)
+            .field("points", &self.points)
+            .field("fullmove", &self.fullmove)
+            .field("halfmove_clock", &self.halfmove_clock)
+            .finish()
+    }
 }
 
 impl Default for Game {
@@ -43,13 +56,41 @@ impl Game {
         // fullmove number
         let fullmove = FEN[5].parse::<u32>().unwrap();
         let board = Board::new(FEN[0], en_passant_square);
+        let points = board.points();
 
         Game {
             board,
             turn,
-            points: 0,
+            points,
             halfmove_clock,
             fullmove,
+        }
+    }
+
+    pub fn turn(&self) -> bool {
+        self.turn
+    }
+
+    pub fn make_move(&mut self, r#move: &Move) {
+        println!("{:?}", self);
+        if let (piece, Some(piece_captured)) = self.board.move_piece(r#move) {
+            self.points += if self.turn {
+                piece_captured.points() as i32
+            } else {
+                -(piece_captured.points() as i32)
+            };
+            match piece {
+                PieceType::WhitePawn | PieceType::BlackPawn => {
+                    self.halfmove_clock = 0;
+                }
+                _ => {
+                    self.halfmove_clock += 1;
+                }
+            }
+        }
+        self.turn = !self.turn;
+        if self.turn {
+            self.fullmove += 1;
         }
     }
 
